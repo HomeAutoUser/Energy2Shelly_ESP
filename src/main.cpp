@@ -27,22 +27,29 @@
 unsigned long startMillis;
 unsigned long currentMillis;
 
-//define your default values here, if there are different values in config.json, they are overwritten.
+// standard values ​​for the WiFi manager
+// !! These values ​​are overwritten by the WifiManager !!
 char input_type[40];
 char mqtt_server[80];
 char mqtt_port[6] = "1883";
 char mqtt_topic[60] = "tele/meter/SENSOR";
 char mqtt_user[40] = "";
 char mqtt_passwd[40] = "";
-char power_path[60] = "";
+// Energy values ​​input | example MQTT testvalue ->  {"ENERGY":{"Power": 9.99,"Consumption":77,"Production":33}}
+char power_path[60] = "ENERGY.Power";
 char power_l1_path[60] = "";
 char power_l2_path[60] = "";
 char power_l3_path[60] = "";
-char energy_in_path[60] ="";
-char energy_out_path[60] ="";
+char energy_in_path[60] ="ENERGY.Consumption";
+char energy_out_path[60] ="ENERGY.Production";
+// Shelly emulated device configuration
+char shelly_app[7] = "Pro3EM";
+char shelly_fw_id[32] = "20241011-114455/1.4.4-g6d2a586";
 char shelly_mac[13];
+char shelly_model[15] = "SPEM-003CEBEU";
 char shelly_name[26] = "shellypro3em-";
-char query_period[10] = "1000";
+char shelly_ver[7] = "1.4.4";
+char query_period[10] = "1000";   // milliseconds
 
 unsigned long period = 1000;
 int rpcId = 1;
@@ -158,7 +165,7 @@ void setEnergyData(double totalEnergyGridSupply, double totalEnergyGridFeedIn) {
   }
   DEBUG_SERIAL.print("Total consumption: ");
   DEBUG_SERIAL.print(totalEnergyGridSupply);
-  DEBUG_SERIAL.print(" - Total Grid Feed-In: ");
+  DEBUG_SERIAL.print(" - Total feed / production: ");
   DEBUG_SERIAL.println(totalEnergyGridFeedIn);
 }
 
@@ -195,13 +202,30 @@ void GetDeviceInfo() {
   jsonResponse["result"]["id"] = shelly_name;
   jsonResponse["result"]["mac"] = shelly_mac;
   jsonResponse["result"]["slot"] = 1;
-  jsonResponse["result"]["model"] = "SPEM-003CEBEU";
+  jsonResponse["result"]["model"] = shelly_model;
   jsonResponse["result"]["gen"] = 2;
-  jsonResponse["result"]["fw_id"] = "20241011-114455/1.4.4-g6d2a586";
-  jsonResponse["result"]["ver"] = "1.4.4";
-  jsonResponse["result"]["app"] = "Pro3EM";
+  jsonResponse["result"]["fw_id"] = shelly_fw_id;
+  jsonResponse["result"]["ver"] = shelly_ver;
+  jsonResponse["result"]["app"] = shelly_app;
   jsonResponse["result"]["auth_en"] = false;
   jsonResponse["result"]["profile"] = "triphase";
+  serializeJson(jsonResponse,serJsonResponse);
+  DEBUG_SERIAL.println(serJsonResponse);
+}
+
+void GetShelly() {
+  JsonDocument jsonResponse;
+  jsonResponse["name"] = shelly_name;
+  jsonResponse["id"] = rpcId;
+  jsonResponse["mac"] = shelly_mac;
+  jsonResponse["slot"] = 1;
+  jsonResponse["model"] = shelly_model;
+  jsonResponse["gen"] = 2;
+  jsonResponse["fw_id"] = shelly_fw_id;
+  jsonResponse["ver"] = shelly_ver;
+  jsonResponse["app"] = shelly_app;
+  jsonResponse["auth_en"] = false;
+  jsonResponse["auth_domain"] = "null";
   serializeJson(jsonResponse,serJsonResponse);
   DEBUG_SERIAL.println(serJsonResponse);
 }
@@ -615,8 +639,8 @@ void WifiManagerSetup() {
   WiFiManagerParameter custom_power_l1_path("power_l1_path", "Phase 1 power JSON path (optional)", power_l1_path, 60);
   WiFiManagerParameter custom_power_l2_path("power_l2_path", "Phase 2 power JSON path (optional)", power_l2_path, 60);
   WiFiManagerParameter custom_power_l3_path("power_l3_path", "Phase 3 power JSON path (optional)", power_l3_path, 60);
-  WiFiManagerParameter custom_energy_in_path("energy_in_path", "Energy from grid JSON path (e.g. \"ENERGY.Grid\")", energy_in_path, 60);
-  WiFiManagerParameter custom_energy_out_path("energy_out_path", "Energy to grid JSON path (e.g. \"ENERGY.FeedIn\")", energy_out_path, 60);
+  WiFiManagerParameter custom_energy_in_path("energy_in_path", "Energy from grid JSON path (e.g. \"ENERGY.Consumption\")", energy_in_path, 60);
+  WiFiManagerParameter custom_energy_out_path("energy_out_path", "Energy to grid JSON path (e.g. \"ENERGY.Feed or ENERGY.Production\")", energy_out_path, 60);
 
 
   WiFiManager wifiManager;
@@ -731,6 +755,14 @@ void setup(void) {
     request->send(200, "text/plain", "This is the Energy2Shelly for ESP converter!\r\nDevice and Energy status is available under /status\r\nTo reset configuration, goto /reset\r\n");
   });
 
+  // https://shelly-api-docs.shelly.cloud/gen2/0.14/Devices/ShellyPro3EM/
+  // https://shelly-api-docs.shelly.cloud/gen2/Devices/Gen2/ShellyPro3EM/
+  // FHEM compatibility | further verification required
+  server.on("/shelly", HTTP_GET, [](AsyncWebServerRequest *request) {
+    GetShelly();
+    request->send(200, "application/json", serJsonResponse);
+  });
+
   server.on("/status", HTTP_GET, [](AsyncWebServerRequest *request) {
     EMGetStatus();
     request->send(200, "application/json", serJsonResponse);
@@ -791,7 +823,7 @@ void setup(void) {
     MDNS.addService("http", "tcp", 80);
     MDNS.addService("shelly", "tcp", 80);
     mdns_txt_item_t serviceTxtData[4] = {
-      {"fw_id","20241011-114455/1.4.4-g6d2a586"},
+      {"fw_id",shelly_fw_id},
       {"arch","esp8266"},
       {"id",shelly_name},
       {"gen","2"}
@@ -805,14 +837,14 @@ void setup(void) {
     hMDNSService2 = MDNS.addService(0, "shelly", "tcp", 80);
     if (hMDNSService) {
       MDNS.setServiceName(hMDNSService, shelly_name);
-      MDNS.addServiceTxt(hMDNSService, "fw_id", "20241011-114455/1.4.4-g6d2a586");
+      MDNS.addServiceTxt(hMDNSService, "fw_id", shelly_fw_id);
       MDNS.addServiceTxt(hMDNSService, "arch", "esp8266");
       MDNS.addServiceTxt(hMDNSService, "id", shelly_name);
       MDNS.addServiceTxt(hMDNSService, "gen", "2");
     }
     if (hMDNSService2) {
       MDNS.setServiceName(hMDNSService2, shelly_name);
-      MDNS.addServiceTxt(hMDNSService2, "fw_id", "20241011-114455/1.4.4-g6d2a586");
+      MDNS.addServiceTxt(hMDNSService2, "fw_id", shelly_fw_id);
       MDNS.addServiceTxt(hMDNSService2, "arch", "esp8266");
       MDNS.addServiceTxt(hMDNSService2, "id", shelly_name);
       MDNS.addServiceTxt(hMDNSService2, "gen", "2");
